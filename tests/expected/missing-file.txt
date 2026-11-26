@@ -1,2 +1,0 @@
-hp: IO Error: No files found that match the pattern "nope.parquet"
-[exit 1]

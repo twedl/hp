@@ -1,2 +1,2 @@
-hp: unknown option: --bogus (see hp --help)
+hp: unknown option: --bogus
 [exit 2]
