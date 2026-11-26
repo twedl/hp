@@ -1,0 +1,21 @@
+Rows: 100
+Columns: 18
+$ id     <BIGINT>                      0, 60
+$ name   <VARCHAR>                     "name_0", "name_60"
+$ value  <DECIMAL(21,1)>               0.0, 90.0
+$ dt     <DATE>                        2024-01-01, 2024-03-01
+$ arr    <BIGINT[]>                    [0, 1], [60, 61]
+$ st     <STRUCT(a BIGINT, b VARCHAR)> {'a': 0, 'b': x}, {'a': 60, 'b': x}
+$ c1     <BIGINT>                      0, 0
+$ c2     <BIGINT>                      0, 0
+$ c3     <BIGINT>                      0, 4
+$ c4     <BIGINT>                      0, 5
+$ c5     <VARCHAR>                     "longish text column 0", "longish text column 60"
+$ c6     <BIGINT>                      0, 8
+$ c7     <BIGINT>                      0, 9
+$ c8     <BIGINT>                      0, 3
+$ c9     <BIGINT>                      0, 14
+$ c10    <BIGINT>                      0, 2
+$ region <BIGINT>                      0, 0
+$ year   <BIGINT>                      0, 0
+[exit 0]

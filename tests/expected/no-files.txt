@@ -1,0 +1,2 @@
+hp: IO Error: No files found that match the pattern "empty/**/*.parquet"
+[exit 1]

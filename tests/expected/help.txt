@@ -1,0 +1,25 @@
+Usage: hp [options] PATH...
+
+Show the first and last rows of parquet data.
+
+PATH is a parquet file, a folder (read as FOLDER/**/*.parquet, e.g. a hive-
+partitioned dataset like data/raw), or a glob such as 'data/raw/**/*.parquet'.
+Several paths are read as one dataset.
+
+Options:
+  -n N           show the first N rows (default: the first 10 and last 10);
+                 with --glimpse, show N values per column (default 5)
+  --glimpse      one line per column with its type and first values,
+                 like dplyr or polars glimpse
+  --all          show every column (default: collapse middle columns to …
+                 so the table fits the terminal)
+  --partition    show hive partition key columns (default: hidden)
+  --types STYLE  type names: polars (default) or duckdb
+  -h, --help     show this help
+
+Environment:
+  HP_DUCKDB      duckdb binary to run (default: duckdb); must be v2.0.0+
+  COLUMNS        output width (default: the terminal's; unlimited when piped)
+
+~/.duckdbrc is never read.
+[exit 0]

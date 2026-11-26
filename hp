@@ -1,0 +1,450 @@
+#!/bin/sh
+# hp: head for parquet files.
+#
+# A thin wrapper around the duckdb CLI (v2.0.0 or newer). The shell only
+# parses arguments and writes one SQL script; a single duckdb session does
+# the rest: it reads row counts from parquet metadata, reads the first rows
+# with LIMIT and the last rows with file name + row number filters, draws
+# the table with duckdb's own display ("duckbox"), then rewrites the type row
+# and footer.
+
+set -eu
+
+prog=hp
+
+usage() {
+	cat <<'EOF'
+Usage: hp [options] PATH...
+
+Show the first and last rows of parquet data.
+
+PATH is a parquet file, a folder (read as FOLDER/**/*.parquet, e.g. a hive-
+partitioned dataset like data/raw), or a glob such as 'data/raw/**/*.parquet'.
+Several paths are read as one dataset.
+
+Options:
+  -n N           show the first N rows (default: the first 10 and last 10);
+                 with --glimpse, show N values per column (default 5)
+  --glimpse      one line per column with its type and first values,
+                 like dplyr or polars glimpse
+  --all          show every column (default: collapse middle columns to …
+                 so the table fits the terminal)
+  --partition    show hive partition key columns (default: hidden)
+  --types STYLE  type names: polars (default) or duckdb
+  -h, --help     show this help
+
+Environment:
+  HP_DUCKDB      duckdb binary to run (default: duckdb); must be v2.0.0+
+  COLUMNS        output width (default: the terminal's; unlimited when piped)
+
+~/.duckdbrc is never read.
+EOF
+}
+
+die() {
+	printf '%s: %s\n' "$prog" "$*" >&2
+	exit 2
+}
+
+# SQL string literal: wrap in single quotes, doubling any inside.
+sql_str() {
+	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
+}
+
+partition=false
+all=0
+glimpse=false
+types=polars
+n=
+paths=
+
+add_path() {
+	p=$1
+	if [ -d "$p" ]; then
+		p="${p%/}/**/*.parquet"
+	fi
+	paths="${paths:+$paths, }$(sql_str "$p")"
+}
+
+while [ $# -gt 0 ]; do
+	case $1 in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	--partition) partition=true ;;
+	--all) all=1 ;;
+	--glimpse) glimpse=true ;;
+	--types)
+		[ $# -ge 2 ] || die "--types needs a value: polars or duckdb"
+		types=$2
+		shift
+		;;
+	--types=*) types=${1#--types=} ;;
+	-n)
+		[ $# -ge 2 ] || die "-n needs a number"
+		n=$2
+		shift
+		;;
+	-n*) n=${1#-n} ;;
+	--)
+		shift
+		for p in "$@"; do add_path "$p"; done
+		break
+		;;
+	-?*) die "unknown option: $1 (see hp --help)" ;;
+	*) add_path "$1" ;;
+	esac
+	shift
+done
+
+[ -n "$paths" ] || {
+	usage >&2
+	exit 2
+}
+
+case $types in
+polars | duckdb) ;;
+*) die "--types must be polars or duckdb, not '$types'" ;;
+esac
+
+case $n in
+'') ;;
+*[!0-9]*) die "-n must be a whole number, not '$n'" ;;
+esac
+
+# duckdb >= 2.0.0. Parse "vX.Y.Z" out of the version output; 2.x may also
+# print an agent-mode notice, which the sed ignores.
+DUCKDB=${HP_DUCKDB:-duckdb}
+command -v "$DUCKDB" >/dev/null 2>&1 ||
+	die "can't find '$DUCKDB'; install duckdb v2.0.0+ or set HP_DUCKDB"
+version=$("$DUCKDB" -version 2>&1 | sed -n 's/^\(v[0-9][0-9]*\.[0-9][0-9.]*\).*/\1/p' | head -n 1)
+major=${version#v}
+major=${major%%.*}
+case $major in
+'' | *[!0-9]*) die "can't read the version of '$DUCKDB'" ;;
+esac
+[ "$major" -ge 2 ] || die "duckdb $version is too old; hp needs v2.0.0 or newer"
+
+# Output width: $COLUMNS if set, else the terminal's, else unlimited (0).
+width=${COLUMNS:-}
+if [ -z "$width" ] && [ -t 1 ]; then
+	width=$(stty size </dev/tty 2>/dev/null | cut -d' ' -f2) || width=
+fi
+case $width in
+'' | *[!0-9]*) width=0 ;;
+esac
+
+if [ "$all" = 1 ] || [ "$width" -eq 0 ]; then
+	maxwidth=1000000
+else
+	maxwidth=$width
+fi
+
+# Default view: 10 head + 4 hidden filler + 10 tail rows, so duckbox (which
+# hides rows only past .maxrows + 3) draws its usual dotted gap. With -n,
+# show every requested row.
+if [ -n "$n" ]; then
+	maxrows=-1
+else
+	maxrows=20
+fi
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/hp.XXXXXX") || die "can't create a temp folder"
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+subst() {
+	sed -e "s|@TMP@|$tmp|g" -e "s|@MAXROWS@|$maxrows|g" -e "s|@MAXWIDTH@|$maxwidth|g"
+}
+
+{
+	printf 'SET VARIABLE hp_paths = [%s];\n' "$paths"
+	printf 'SET VARIABLE hp_hive = %s;\n' "$partition"
+	printf 'SET VARIABLE hp_glimpse = %s;\n' "$glimpse"
+	printf 'SET VARIABLE hp_n = %s;\n' "${n:-NULL::BIGINT}"
+	printf 'SET VARIABLE hp_types = %s;\n' "$(sql_str "$types")"
+	printf 'SET VARIABLE hp_width = %s;\n' "$width"
+
+	subst <<'SQL'
+.bail on
+.pager off
+.mode list
+.headers off
+SET enable_progress_bar = false;
+
+-- The dataset, plus the file name and row number of each row so the first
+-- and last rows can be fetched by file without scanning everything.
+CREATE TEMP VIEW hp_raw AS
+FROM read_parquet(getvariable('hp_paths'),
+                  hive_partitioning = getvariable('hp_hive'),
+                  filename = '__hp_file',
+                  file_row_number = true);
+
+-- Row counts per file, from parquet metadata only, in read order: paths in
+-- the order given, each glob expanded in sorted order (as read_parquet does).
+-- start is the dataset row number of each file's first row.
+CREATE TEMP TABLE hp_files AS
+SELECT file, nrows, fi,
+       (sum(nrows) OVER (ORDER BY fi ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) - nrows)::BIGINT AS start
+FROM (
+    SELECT file_name AS file, num_rows::BIGINT AS nrows, row_number() OVER () AS fi
+    FROM parquet_file_metadata(getvariable('hp_paths'))
+);
+CREATE TEMP TABLE hp_fileorder AS
+SELECT file AS __hp_file, min(fi) AS __hp_fi FROM hp_files GROUP BY file;
+
+SET VARIABLE hp_total = (SELECT coalesce(sum(nrows), 0)::BIGINT FROM hp_files);
+SET VARIABLE hp_bounded = NOT getvariable('hp_glimpse')
+                          AND getvariable('hp_n') IS NULL
+                          AND getvariable('hp_total') > 23;
+SET VARIABLE hp_head = CASE
+    WHEN getvariable('hp_bounded') THEN 10
+    WHEN getvariable('hp_glimpse') THEN coalesce(getvariable('hp_n'), 5)
+    ELSE coalesce(getvariable('hp_n'), getvariable('hp_total')) END;
+SET VARIABLE hp_tail = CASE WHEN getvariable('hp_bounded') THEN 10 ELSE 0 END;
+SET VARIABLE hp_shown = least(getvariable('hp_head'), getvariable('hp_total')) + getvariable('hp_tail');
+
+-- duckdb type names -> polars type names. Placeholders keep brackets and
+-- commas out of the way while nested types are collapsed: <> for [],
+-- # for ",", @ for ", " and § for UTC. hp_finish turns them back.
+CREATE TEMP MACRO hp_scalars(t) AS list_reduce([
+    ['TIMESTAMP WITH TIME ZONE', 'datetime<μs@§>'],
+    ['TIME WITH TIME ZONE', 'time'],
+    ['\bTIMESTAMP_NS\b', 'datetime<ns>'],
+    ['\bTIMESTAMP_MS\b', 'datetime<ms>'],
+    ['\bTIMESTAMP_S\b', 'datetime<ms>'],
+    ['\bTIMESTAMP\b', 'datetime<μs>'],
+    ['\bDECIMAL\((\d+),(\d+)\)', 'decimal<\1#\2>'],
+    ['\bTINYINT\b', 'i8'], ['\bSMALLINT\b', 'i16'], ['\bINTEGER\b', 'i32'],
+    ['\bBIGINT\b', 'i64'], ['\bHUGEINT\b', 'i128'],
+    ['\bUTINYINT\b', 'u8'], ['\bUSMALLINT\b', 'u16'], ['\bUINTEGER\b', 'u32'],
+    ['\bUBIGINT\b', 'u64'], ['\bUHUGEINT\b', 'u128'],
+    ['\bFLOAT\b', 'f32'], ['\bDOUBLE\b', 'f64'],
+    ['\bVARCHAR\b', 'str'], ['\bJSON\b', 'str'], ['\bBOOLEAN\b', 'bool'],
+    ['\bBLOB\b', 'binary'], ['\bDATE\b', 'date'], ['\bTIME\b', 'time'],
+    ['\bINTERVAL\b', 'duration<μs>'], ['"NULL"', 'null']
+  ], lambda acc, p: regexp_replace(acc, p[1], p[2], 'g'), t);
+
+-- One rewrite step: collapse the innermost NAME(...) group, then (once no
+-- parentheses are left) turn the first T[] / T[n] suffix into list / array.
+CREATE TEMP MACRO hp_group(s, i) AS regexp_extract(s, '([A-Za-z_]+)\(([^()]*)\)', i);
+CREATE TEMP MACRO hp_step(s) AS CASE
+    WHEN regexp_matches(s, '[A-Za-z_]+\([^()]*\)') THEN
+        replace(s, hp_group(s, 0), CASE upper(hp_group(s, 1))
+            WHEN 'STRUCT' THEN 'struct<' || CASE WHEN hp_group(s, 2) = '' THEN 0
+                                                ELSE len(string_split(hp_group(s, 2), ', ')) END || '>'
+            WHEN 'MAP' THEN 'list<struct<2>>'
+            ELSE lower(hp_group(s, 1)) END)
+    WHEN contains(s, '(') THEN replace(replace(s, '(', '<'), ')', '>')
+    WHEN regexp_matches(s, '^[^\[]*\[\]') THEN regexp_replace(s, '^([^\[]*)\[\]', 'list<\1>')
+    WHEN regexp_matches(s, '^[^\[]*\[\d+\]') THEN regexp_replace(s, '^([^\[]*)\[(\d+)\]', 'array<\1@\2>')
+    ELSE replace(replace(s, '[', '<'), ']', '>') END;
+CREATE TEMP MACRO hp_finish(s) AS
+    replace(replace(replace(replace(replace(lower(s), '<', '['), '>', ']'), '#', ','), '@', ', '), '§', 'UTC');
+
+-- Columns in order, with their duckdb and polars type names.
+CREATE TEMP TABLE hp_cols AS
+WITH RECURSIVE c AS (
+    SELECT row_number() OVER () AS ci, column_name AS name, column_type AS dtype
+    FROM (DESCRIBE SELECT * EXCLUDE (__hp_file, file_row_number) FROM hp_raw)
+), r(ci, s, k) AS (
+    SELECT ci, hp_scalars(dtype), 0 FROM c
+    UNION ALL
+    SELECT ci, hp_step(s), k + 1 FROM r WHERE regexp_matches(s, '[\[(]') AND k < 64
+)
+SELECT ci, name, dtype, ptype,
+       CASE WHEN getvariable('hp_types') = 'duckdb' THEN dtype ELSE ptype END AS shown_type
+FROM (
+    SELECT c.ci, c.name, c.dtype, hp_finish(arg_max(r.s, r.k)) AS ptype
+    FROM c JOIN r USING (ci)
+    GROUP BY c.ci, c.name, c.dtype
+);
+
+-- Build the hp_rows view: the first hp_head rows (LIMIT), 4 filler rows, and
+-- the last hp_tail rows. The tail is read with a file name + row number
+-- filter per file, so duckdb skips straight to the last row groups.
+CREATE TEMP MACRO hp_lit(s) AS '''' || replace(s, '''', '''''') || '''';
+.once @TMP@/rows.sql
+WITH b AS (
+    SELECT 0 AS part, 0 AS fi,
+           format('SELECT 0 AS __hp_part, * FROM (FROM hp_raw LIMIT {})', getvariable('hp_head')) AS q
+    UNION ALL
+    SELECT 1, 0, 'SELECT 1 AS __hp_part, r.* FROM range(4) t LEFT JOIN (FROM hp_raw LIMIT 0) r ON true'
+    WHERE getvariable('hp_tail') > 0
+    UNION ALL
+    SELECT 2, fi,
+           format('SELECT 2 AS __hp_part, * FROM hp_raw WHERE __hp_file = {} AND file_row_number >= {}',
+                  hp_lit(file), greatest(getvariable('hp_total') - getvariable('hp_tail') - start, 0))
+    FROM hp_files
+    WHERE getvariable('hp_tail') > 0 AND start + nrows > getvariable('hp_total') - getvariable('hp_tail')
+)
+SELECT 'CREATE TEMP VIEW hp_rows AS SELECT row_number() OVER (ORDER BY __hp_part, __hp_fi, file_row_number) AS __hp_ord, '
+       || '* EXCLUDE (__hp_part, __hp_fi, __hp_file, file_row_number) FROM ('
+       || string_agg(q, ' UNION ALL ' ORDER BY part, fi)
+       || ') LEFT JOIN hp_fileorder USING (__hp_file);'
+FROM b;
+.read @TMP@/rows.sql
+SQL
+
+	if [ "$glimpse" = true ]; then
+		subst <<'SQL'
+-- Glimpse: one line per column. UNPIVOT drops NULLs, so they travel as chr(0).
+WITH s AS (
+    SELECT __hp_ord, coalesce(COLUMNS(* EXCLUDE __hp_ord)::VARCHAR, chr(0)) FROM hp_rows
+), v AS (
+    UNPIVOT s ON COLUMNS(* EXCLUDE __hp_ord) INTO NAME __hp_col VALUE __hp_val
+), vals AS (
+    SELECT c.ci,
+           string_agg(CASE WHEN v.__hp_val = chr(0) THEN 'null'
+                           WHEN c.dtype = 'VARCHAR' THEN '"' || v.__hp_val || '"'
+                           ELSE v.__hp_val END, ', ' ORDER BY v.__hp_ord) AS vs
+    FROM v JOIN hp_cols c ON c.name = v.__hp_col
+    GROUP BY c.ci
+), w AS (
+    SELECT max(length(name))::INT AS wn, (max(length(shown_type)) + 2)::INT AS wt FROM hp_cols
+), lines AS (
+    SELECT 0 AS k, 'Rows: ' || getvariable('hp_total') AS line
+    UNION ALL
+    SELECT 1, 'Columns: ' || (SELECT count(*) FROM hp_cols)
+    UNION ALL
+    SELECT 1 + c.ci, rtrim('$ ' || rpad(c.name, w.wn, ' ') || ' '
+                           || rpad('<' || c.shown_type || '>', w.wt, ' ') || ' ' || coalesce(vals.vs, ''))
+    FROM hp_cols c LEFT JOIN vals USING (ci), w
+)
+SELECT CASE WHEN getvariable('hp_width') > 0 AND length(line) > getvariable('hp_width')
+            THEN left(line, getvariable('hp_width') - 1) || '…'
+            ELSE line END
+FROM lines ORDER BY k;
+SQL
+	else
+		subst <<'SQL'
+-- Table: draw hp_rows with duckbox into a file, read it back, and fix it up.
+CREATE TEMP MACRO hp_qi(s) AS '"' || replace(s, '"', '""') || '"';
+-- Center s in w characters the way duckbox does: an odd extra space goes
+-- on the right.
+CREATE TEMP MACRO hp_center(s, w) AS
+    repeat(' ', (w - length(s)) // 2) || s || repeat(' ', w - length(s) - (w - length(s)) // 2);
+
+-- The drawn table as numbered lines, the cells of one line, and which
+-- column each displayed cell is: cells left of the collapsed … column are
+-- the first columns, cells right of it the last ones.
+CREATE TEMP MACRO hp_lines() AS TABLE
+    SELECT unnest(string_split(content, chr(10))) AS line,
+           generate_subscripts(string_split(content, chr(10)), 1) AS ln
+    FROM read_text('@TMP@/table.txt');
+CREATE TEMP MACRO hp_cells(row_ln) AS TABLE
+    SELECT unnest(string_split(line, '│')[2:-2]) AS cell,
+           generate_subscripts(string_split(line, '│')[2:-2], 1) AS j
+    FROM hp_lines() WHERE ln = row_ln;
+CREATE TEMP MACRO hp_layout() AS TABLE
+    WITH h AS (
+        SELECT list(cell ORDER BY j) AS cells FROM hp_cells(2)
+    ), g AS (
+        SELECT len(cells) AS ncell,
+               coalesce(nullif(list_position(list_transform(cells, lambda x: trim(x)), '…'), 0),
+                        len(cells) + 1) AS dot,
+               (SELECT count(*) FROM hp_cols) AS ncols
+        FROM h
+    )
+    SELECT j, CASE WHEN j < dot THEN j WHEN j = dot THEN NULL ELSE ncols - (ncell - j) END AS ci,
+           ncell, dot, ncols
+    FROM g, range(1, ncell + 1) r(j);
+
+.once @TMP@/show.sql
+SELECT 'SELECT ' || string_agg(hp_qi(name), ', ' ORDER BY ci) || ' FROM hp_rows ORDER BY __hp_ord;'
+FROM hp_cols;
+.mode duckbox
+.headers on
+.maxrows @MAXROWS@
+.maxwidth @MAXWIDTH@
+.output @TMP@/table.txt
+.read @TMP@/show.sql
+.output
+.mode list
+.headers off
+
+-- If a polars type name is wider than its column, draw again with that
+-- column's name padded with spaces, so duckbox makes the column wide enough.
+.once @TMP@/show2.sql
+WITH need AS (
+    SELECT l.ci
+    FROM hp_layout() l JOIN hp_cells(3) t USING (j) JOIN hp_cols c ON c.ci = l.ci
+    WHERE length(c.ptype) > length(t.cell) - 2 AND length(c.ptype) > length(c.name)
+)
+SELECT CASE WHEN getvariable('hp_types') = 'polars' AND (SELECT count(*) FROM need) > 0 THEN
+    concat_ws(chr(10),
+        '.mode duckbox', '.headers on', '.output @TMP@/table.txt',
+        (SELECT 'SELECT '
+                || string_agg(hp_qi(name) || CASE WHEN ci IN (FROM need)
+                                                  THEN ' AS ' || hp_qi(hp_center(name, length(ptype)))
+                                                  ELSE '' END, ', ' ORDER BY ci)
+                || ' FROM hp_rows ORDER BY __hp_ord;'
+         FROM hp_cols),
+        '.output', '.mode list', '.headers off')
+    ELSE '' END;
+.read @TMP@/show2.sql
+
+-- Swap in polars type names and rebuild the footer with the dataset's real
+-- row count (duckdb only saw the rows hp fetched).
+WITH lines AS (
+    FROM hp_lines()
+), bottom AS (
+    SELECT min(ln) FILTER (WHERE starts_with(line, '└')) AS bl,
+           max(length(line)) FILTER (WHERE ln = 1) AS tw
+    FROM lines
+), geo AS (
+    SELECT DISTINCT ncell, dot, ncols FROM hp_layout()
+), typerow AS (
+    SELECT '│' || string_agg(CASE
+               WHEN m.ci IS NULL THEN t.cell
+               WHEN length(c.ptype) > length(t.cell) - 2
+                   THEN ' ' || left(c.ptype, length(t.cell) - 3) || '… '
+               ELSE hp_center(c.ptype, length(t.cell))
+               END, '│' ORDER BY t.j) || '│' AS line
+    FROM hp_cells(3) t JOIN hp_layout() m USING (j) LEFT JOIN hp_cols c ON c.ci = m.ci
+), foot AS (
+    SELECT getvariable('hp_total') || CASE WHEN getvariable('hp_total') = 1 THEN ' row' ELSE ' rows' END
+           || CASE WHEN getvariable('hp_shown') < getvariable('hp_total')
+                   THEN ' (' || getvariable('hp_shown') || ' shown)' ELSE '' END AS rows_text,
+           ncols || CASE WHEN ncols = 1 THEN ' column' ELSE ' columns' END
+           || CASE WHEN ncell - (dot <= ncell)::INT < ncols
+                   THEN ' (' || (ncell - (dot <= ncell)::INT) || ' shown)' ELSE '' END AS cols_text,
+           ncell - (dot <= ncell)::INT < ncols AS cols_hidden,
+           getvariable('hp_total') = 0
+           OR getvariable('hp_shown') < getvariable('hp_total')
+           OR cols_hidden AS visible
+    FROM geo
+), footlines AS (
+    -- Like duckdb: rows on the left, columns on the right if they fit; on a
+    -- narrow table the column count gets its own line only if some are hidden.
+    SELECT bl + 1 AS ln,
+           CASE WHEN length(rows_text) + length(cols_text) + 6 <= tw
+                THEN '  ' || rows_text || repeat(' ', tw - length(rows_text) - length(cols_text) - 4) || cols_text
+                ELSE '  ' || rows_text END AS line
+    FROM foot, bottom WHERE visible
+    UNION ALL
+    SELECT bl + 2, '  ' || cols_text
+    FROM foot, bottom WHERE visible AND cols_hidden AND length(rows_text) + length(cols_text) + 6 > tw
+)
+SELECT line FROM (
+    SELECT ln, CASE WHEN ln = 3 AND getvariable('hp_types') = 'polars' THEN (FROM typerow) ELSE line END AS line
+    FROM lines, bottom WHERE ln <= bl
+    UNION ALL
+    FROM footlines
+) ORDER BY ln;
+SQL
+	fi
+} >"$tmp/hp.sql"
+
+# On failure show only the first paragraph of duckdb's message: the rest
+# quotes hp's own SQL, which only confuses.
+status=0
+"$DUCKDB" -no-init -no-agent -bail -f "$tmp/hp.sql" 2>"$tmp/err" || status=$?
+if [ "$status" -ne 0 ]; then
+	sed -e '/^$/,$d' -e "s/^/$prog: /" "$tmp/err" >&2
+	exit "$status"
+fi
+cat "$tmp/err" >&2

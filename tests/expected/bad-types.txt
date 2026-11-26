@@ -1,0 +1,2 @@
+hp: --types must be polars or duckdb, not 'arrow'
+[exit 2]

@@ -1,0 +1,31 @@
+Rows: 1
+Columns: 28
+$ a  <i8>                1
+$ b  <i16>               1
+$ c  <i32>               1
+$ d  <i64>               1
+$ f  <u8>                1
+$ g  <u16>               1
+$ h  <u32>               1
+$ i  <u64>               1
+$ j  <f32>               1.5
+$ k  <f64>               1.5
+$ l  <decimal[10,2]>     1.50
+$ m  <str>               "x"
+$ n  <bool>              true
+$ o  <binary>            ab
+$ p  <date>              2024-01-01
+$ q  <time>              01:02:03
+$ r  <datetime[μs]>      2024-01-01 01:02:03
+$ s  <datetime[μs]>      2024-01-01 00:00:00
+$ t  <datetime[ns]>      2024-01-01 00:00:00
+$ v  <datetime[μs, UTC]> null
+$ w  <duration[μs]>      1 day
+$ x  <uuid>              6f1c2a4e-3c1b-4a4e-9b7e-2f8a1d3c4b5a
+$ y  <list[list[i32]]>   [[1, 2], [3]]
+$ aa <struct[2]>         {'p': {'q': 1, 'r': [1.5]}, 's': x}
+$ bb <list[struct[2]]>   {k=1}
+$ cc <list[struct[2]]>   [{'a': 1, 'b': 2}]
+$ dd <str>               null
+$ ee <list[str]>         [a, NULL]
+[exit 0]

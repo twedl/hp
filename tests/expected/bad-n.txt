@@ -1,0 +1,2 @@
+hp: -n must be a whole number, not 'x'
+[exit 2]
