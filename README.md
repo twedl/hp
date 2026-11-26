@@ -24,7 +24,7 @@ $ hp data/raw
 └─────────┴─────────────────────┴───────────┴───┴─────────┴─────────┘
   10 rows                                      10 columns (5 shown)
 
-$ hp --glimpse -n 3 data/raw
+$ hp --glimpse data/raw
 ┌─────────────┬──────────────┬─────────────────────┬─────────────────────┬─────────────────────┐
 │   Column    │     Type     │        Row 1        │        Row 2        │        Row 3        │
 ├─────────────┼──────────────┼─────────────────────┼─────────────────────┼─────────────────────┤
@@ -47,7 +47,7 @@ $ hp --glimpse -n 3 data/raw
 hp [OPTION]... PATH...
 
   -n, --lines=N    show the first N rows (default 10; with --glimpse, N
-                   values per column, default 5)
+                   values per column, default 3)
   -g, --glimpse    one line per column: name, type, first values
                    (duckdb's .columns view)
   -a, --all        show every column instead of collapsing the middle ones

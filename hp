@@ -10,7 +10,7 @@ Print the first rows of parquet data with the duckdb CLI (v2.0.0+). PATH is
 a parquet file, a folder (read as FOLDER/**/*.parquet), or a quoted glob.
 
   -n, --lines=N    show the first N rows (default 10; with --glimpse, N
-                   values per column, default 5)
+                   values per column, default 3)
   -g, --glimpse    one line per column: name, type, first values
                    (duckdb's .columns view)
   -a, --all        show every column instead of collapsing the middle ones
@@ -64,7 +64,7 @@ src="read_parquet([$paths], hive_partitioning = $hive, union_by_name = true)"
 
 # --glimpse uses duckdb's column-wise view: one line per column.
 mode=.rows rows=10 maxwidth=0
-[ "$glimpse" = true ] && mode=.columns rows=5
+[ "$glimpse" = true ] && mode=.columns rows=3
 [ "$all" = true ] && maxwidth=1000000
 exec duckdb -no-init -no-agent -cmd "$mode" -cmd ".maxrows -1" -cmd ".maxwidth $maxwidth" \
 	-c "FROM $src LIMIT ${n:-$rows}"
