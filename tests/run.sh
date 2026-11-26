@@ -15,6 +15,10 @@ duckdb -no-init -no-agent -cmd "SET threads = 1" -c "COPY (
     FROM range(100) t(i)
 ) TO 'data' (FORMAT parquet, PARTITION_BY (year))"
 
+# A column added in a later file must still show up.
+mkdir -p evolve
+duckdb -no-init -no-agent -c "COPY (SELECT 1 AS id) TO 'evolve/a.parquet'; COPY (SELECT 2 AS id, 3.5 AS score) TO 'evolve/b.parquet'"
+
 fail=0
 check() {
 	name=$1
@@ -35,6 +39,7 @@ check partition -n 3 --partition data
 check glimpse --glimpse data
 check glimpse-2 --glimpse -n 2 --partition 'data/**/*.parquet'
 check missing nope.parquet
+check new-column evolve
 check bad-option --bogus data
 
 [ "$fail" = 0 ] && echo "all tests passed"

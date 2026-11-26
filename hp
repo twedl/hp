@@ -49,7 +49,7 @@ v[2-9].* | v[1-9][0-9]*) ;;
 *) die "needs duckdb v2.0.0 or newer, but $(command -v duckdb) is ${version:-an unknown version}" ;;
 esac
 
-src="read_parquet([$paths], hive_partitioning = $hive)"
+src="read_parquet([$paths], hive_partitioning = $hive, union_by_name = true)"
 
 # --glimpse uses duckdb's column-wise view: one line per column.
 mode=.rows rows=10 maxwidth=0
