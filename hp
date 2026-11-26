@@ -11,7 +11,7 @@ a folder (read as FOLDER/**/*.parquet), or a quoted glob.
 
   -n N         show the first N rows (default 10; with --glimpse, N values
                per column, default 5)
-  --glimpse    one line per column: name, type, first values
+  --glimpse    one line per column: name, type, first values (duckdb .columns)
   --all        show every column instead of collapsing the middle ones
   --partition  show hive partition columns (hidden by default)
   -h, --help   show this help
@@ -49,33 +49,9 @@ esac
 
 src="read_parquet([$paths], hive_partitioning = $hive)"
 
-if [ "$glimpse" = true ]; then
-	width=0
-	[ -t 1 ] && width=$(tput cols)
-	exec duckdb -no-init -no-agent -list -noheader -c "
-WITH s AS (FROM $src LIMIT ${n:-5}),
-cols AS (
-    SELECT row_number() OVER () AS i, column_name AS col, column_type AS type
-    FROM (DESCRIBE FROM $src)
-),
-vals AS (
-    UNPIVOT (SELECT row_number() OVER () AS __row, coalesce(COLUMNS(*)::VARCHAR, 'NULL') FROM s)
-    ON COLUMNS(* EXCLUDE __row) INTO NAME col VALUE val
-),
-lines AS (
-    SELECT 0 AS i, 'Rows: ' || (SELECT count(*) FROM $src) AS line
-    UNION ALL
-    SELECT 0.5, 'Columns: ' || count(*) FROM cols
-    UNION ALL
-    SELECT i, '\$ ' || rpad(col, (SELECT max(length(col)) FROM cols)::INT, ' ') || ' <' || type || '> '
-              || coalesce(string_agg(val, ', ' ORDER BY __row), '')
-    FROM cols LEFT JOIN vals USING (col)
-    GROUP BY i, col, type
-)
-SELECT CASE WHEN $width > 0 AND length(line) > $width THEN left(line, $width - 1) || '…' ELSE line END
-FROM lines ORDER BY i"
-fi
-
-maxwidth=0
+# --glimpse uses duckdb's column-wise view: one line per column.
+mode=.rows rows=10 maxwidth=0
+[ "$glimpse" = true ] && mode=.columns rows=5
 [ "$all" = true ] && maxwidth=1000000
-exec duckdb -no-init -no-agent -cmd ".maxrows -1" -cmd ".maxwidth $maxwidth" -c "FROM $src LIMIT ${n:-10}"
+exec duckdb -no-init -no-agent -cmd "$mode" -cmd ".maxrows -1" -cmd ".maxwidth $maxwidth" \
+	-c "FROM $src LIMIT ${n:-$rows}"

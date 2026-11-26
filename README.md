@@ -24,19 +24,21 @@ $ hp data/raw
 └─────────┴─────────────────────┴───────────┴───┴─────────┴─────────┘
   10 rows                                      10 columns (5 shown)
 
-$ hp --glimpse data/raw
-Rows: 150000
-Columns: 10
-$ trip_id     <BIGINT> 0, 1, 2, 3, 4
-$ pickup_at   <TIMESTAMP> 2023-01-01 06:00:00, 2023-01-01 06:10:00, 202…
-$ zone        <VARCHAR> downtown, harbour, west side, airport, north end
-$ fare        <DECIMAL(8,2)> 5.00, 5.37, 5.74, 6.11, 6.48
-$ tipped      <BOOLEAN> true, false, false, false, false
-$ passengers  <BIGINT> 1, 4, 3, 2, 1
-$ payment     <VARCHAR> card, cash, app, card, cash
-$ distance_km <DOUBLE> 0.5, 2.2, 3.9, 5.6, 7.3
-$ driver      <VARCHAR> NULL, D-031, D-062, D-093, D-124
-$ ratings     <BIGINT[]> [1, 1], [2, 2], [3, 3], [1, 4], [2, 5]
+$ hp --glimpse -n 3 data/raw
+┌─────────────┬──────────────┬─────────────────────┬─────────────────────┬─────────────────────┐
+│   Column    │     Type     │        Row 1        │        Row 2        │        Row 3        │
+├─────────────┼──────────────┼─────────────────────┼─────────────────────┼─────────────────────┤
+│ trip_id     │ int64        │                   0 │                   1 │                   2 │
+│ pickup_at   │ timestamp    │ 2023-01-01 06:00:00 │ 2023-01-01 06:10:00 │ 2023-01-01 06:20:00 │
+│ zone        │ varchar      │            downtown │             harbour │           west side │
+│ fare        │ decimal(8,2) │                5.00 │                5.37 │                5.74 │
+│ tipped      │ boolean      │                true │               false │               false │
+│ passengers  │ int64        │                   1 │                   4 │                   3 │
+│ payment     │ varchar      │                card │                cash │                 app │
+│ distance_km │ double       │                 0.5 │                 2.2 │                 3.9 │
+│ driver      │ varchar      │                NULL │               D-031 │               D-062 │
+│ ratings     │ int64[]      │              [1, 1] │              [2, 2] │              [3, 3] │
+└─────────────┴──────────────┴─────────────────────┴─────────────────────┴─────────────────────┘
 ```
 
 ## Usage
@@ -46,7 +48,7 @@ hp [options] PATH...
 
   -n N         show the first N rows (default 10; with --glimpse, N values
                per column, default 5)
-  --glimpse    one line per column: name, type, first values
+  --glimpse    one line per column: name, type, first values (duckdb .columns)
   --all        show every column instead of collapsing the middle ones
   --partition  show hive partition columns (hidden by default)
 ```

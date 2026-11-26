@@ -1,7 +1,9 @@
-Rows: 100
-Columns: 5
-$ id    <BIGINT> 0, 4
-$ name  <VARCHAR> name_0, name_4
-$ arr   <BIGINT[]> [0, 1], [4, 5]
-$ value <DECIMAL(21,1)> NULL, 6.0
-$ year  <BIGINT> 0, 0
+┌────────┬───────────────┬────────┬────────┐
+│ Column │     Type      │ Row 1  │ Row 2  │
+├────────┼───────────────┼────────┼────────┤
+│ id     │ int64         │      0 │      4 │
+│ name   │ varchar       │ name_0 │ name_4 │
+│ arr    │ int64[]       │ [0, 1] │ [4, 5] │
+│ value  │ decimal(21,1) │   NULL │    6.0 │
+│ year   │ int64         │      0 │      0 │
+└────────┴───────────────┴────────┴────────┘
