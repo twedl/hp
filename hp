@@ -42,9 +42,11 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$paths" ] || { usage >&2; exit 2; }
 case $n in *[!0-9]*) die "-n must be a number, not '$n'" ;; esac
-case $(duckdb -no-agent -version 2>/dev/null) in
+command -v duckdb >/dev/null 2>&1 || die "can't find duckdb on PATH (shell aliases don't count)"
+version=$(duckdb -version 2>&1 | grep '^v[0-9]' | head -n 1)
+case $version in
 v[2-9].* | v[1-9][0-9]*) ;;
-*) die "needs duckdb v2.0.0 or newer" ;;
+*) die "needs duckdb v2.0.0 or newer, but $(command -v duckdb) is ${version:-an unknown version}" ;;
 esac
 
 src="read_parquet([$paths], hive_partitioning = $hive)"
