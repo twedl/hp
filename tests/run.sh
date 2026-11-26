@@ -34,13 +34,30 @@ check() {
 [ "${1:-}" = --update ] && UPDATE=1 && mkdir -p "$here/expected"
 
 check default data
+
+# Every spelling of an option must give the same output.
 check first-3 -n 3 data
+check first-3 -n3 data
+check first-3 --lines 3 data
+check first-3 --lines=3 data
+check first-3 -3 data
+check first-3 -n 3 -- data
 check partition -n 3 --partition data
+check partition -p -n 3 data
+check partition -pn3 data
 check glimpse --glimpse data
+check glimpse -g data
 check glimpse-2 --glimpse -n 2 --partition 'data/**/*.parquet'
+check glimpse-2 -gp -n2 'data/**/*.parquet'
+check glimpse-2 -gpn 2 'data/**/*.parquet'
+check glimpse-2 -pg2 'data/**/*.parquet'
+
 check missing nope.parquet
 check new-column evolve
 check bad-option --bogus data
+check bad-combined -gx data
+check bad-number -n x data
+check no-number data -n
 
 [ "$fail" = 0 ] && echo "all tests passed"
 exit "$fail"

@@ -4,17 +4,20 @@ set -eu
 
 usage() {
 	cat <<'EOF'
-Usage: hp [options] PATH...
+Usage: hp [OPTION]... PATH...
 
-Print parquet data with the duckdb CLI (v2.0.0+). PATH is a parquet file,
-a folder (read as FOLDER/**/*.parquet), or a quoted glob.
+Print the first rows of parquet data with the duckdb CLI (v2.0.0+). PATH is
+a parquet file, a folder (read as FOLDER/**/*.parquet), or a quoted glob.
 
-  -n N         show the first N rows (default 10; with --glimpse, N values
-               per column, default 5)
-  --glimpse    one line per column: name, type, first values (duckdb .columns)
-  --all        show every column instead of collapsing the middle ones
-  --partition  show hive partition columns (hidden by default)
-  -h, --help   show this help
+  -n, --lines=N    show the first N rows (default 10; with --glimpse, N
+                   values per column, default 5)
+  -g, --glimpse    one line per column: name, type, first values
+                   (duckdb's .columns view)
+  -a, --all        show every column instead of collapsing the middle ones
+  -p, --partition  show hive partition columns (hidden by default)
+  -h, --help       show this help
+
+As with head, -N means -n N. Short options can be combined: -gp, -gn3.
 EOF
 }
 
@@ -23,25 +26,39 @@ die() {
 	exit 2
 }
 
+add_path() {
+	p=$1
+	[ -d "$p" ] && p="${p%/}/**/*.parquet"
+	paths="${paths:+$paths, }'$(printf %s "$p" | sed "s/'/''/g")'"
+}
+
 n= glimpse=false all=false hive=false paths=
 while [ $# -gt 0 ]; do
 	case $1 in
 	-h | --help) usage; exit 0 ;;
-	-n) [ $# -ge 2 ] || die "-n needs a number"; n=$2; shift ;;
-	--glimpse) glimpse=true ;;
-	--all) all=true ;;
-	--partition) hive=true ;;
-	-?*) die "unknown option: $1" ;;
-	*)
-		p=$1
-		[ -d "$p" ] && p="${p%/}/**/*.parquet"
-		paths="${paths:+$paths, }'$(printf %s "$p" | sed "s/'/''/g")'"
+	-n | --lines) [ $# -ge 2 ] || die "$1 needs a number"; n=$2; shift ;;
+	-n?*) n=${1#-n} ;;
+	--lines=*) n=${1#--lines=} ;;
+	-[0-9]*) n=${1#-} ;;
+	-g | --glimpse) glimpse=true ;;
+	-a | --all) all=true ;;
+	-p | --partition) hive=true ;;
+	--) shift; for p in "$@"; do add_path "$p"; done; break ;;
+	-[!-]?*)
+		# Combined short options: -gp is -g -p.
+		rest=${1#-?}
+		first=${1%"$rest"}
+		shift
+		set -- "$first" "-$rest" "$@"
+		continue
 		;;
+	-?*) die "unknown option: $1 (see hp --help)" ;;
+	*) add_path "$1" ;;
 	esac
 	shift
 done
 [ -n "$paths" ] || { usage >&2; exit 2; }
-case $n in *[!0-9]*) die "-n must be a number, not '$n'" ;; esac
+case $n in *[!0-9]*) die "the number of rows must be a whole number, not '$n'" ;; esac
 
 src="read_parquet([$paths], hive_partitioning = $hive, union_by_name = true)"
 

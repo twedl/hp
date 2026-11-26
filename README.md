@@ -44,13 +44,17 @@ $ hp --glimpse -n 3 data/raw
 ## Usage
 
 ```
-hp [options] PATH...
+hp [OPTION]... PATH...
 
-  -n N         show the first N rows (default 10; with --glimpse, N values
-               per column, default 5)
-  --glimpse    one line per column: name, type, first values (duckdb .columns)
-  --all        show every column instead of collapsing the middle ones
-  --partition  show hive partition columns (hidden by default)
+  -n, --lines=N    show the first N rows (default 10; with --glimpse, N
+                   values per column, default 5)
+  -g, --glimpse    one line per column: name, type, first values
+                   (duckdb's .columns view)
+  -a, --all        show every column instead of collapsing the middle ones
+  -p, --partition  show hive partition columns (hidden by default)
+  -h, --help       show this help
+
+As with head, -N means -n N. Short options can be combined: -gp, -gn3.
 ```
 
 `PATH` can be a parquet file, a folder (read as `FOLDER/**/*.parquet`), or a
