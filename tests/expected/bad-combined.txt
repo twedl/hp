@@ -1,0 +1,2 @@
+hp: unknown option: -x (see hp --help)
+[exit 2]

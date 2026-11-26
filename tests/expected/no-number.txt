@@ -1,0 +1,2 @@
+hp: -n needs a number
+[exit 2]

@@ -1,0 +1,2 @@
+hp: the number of rows must be a whole number, not 'x'
+[exit 2]
