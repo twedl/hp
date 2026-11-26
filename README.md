@@ -1,12 +1,11 @@
 # hp
 
-`head` for parquet files.
+`head` for parquet files, using the
+[duckdb CLI](https://duckdb.org/docs/stable/clients/cli/overview).
 
 `hp` shows the first rows of a parquet file, a hive-partitioned folder, or a
 glob. With `--glimpse` it shows one row per column instead, with each
-column's type and first few values. It's a short shell script around the
-[duckdb CLI](https://duckdb.org/docs/stable/clients/cli/overview), and reads
-only the rows it prints, so it's quick on datasets of any size.
+column's type and first few values.
 
 ```
 $ hp data/raw
@@ -55,7 +54,7 @@ $ hp --glimpse data/raw
   install duckdb, use `brew install duckdb` or the official installer
   (`curl https://install.duckdb.org | sh`). The installer's output tells you
   how to add duckdb to your `PATH`.
-- Any POSIX shell (`/bin/sh` on Linux and macOS). Nothing else is needed.
+- A POSIX shell (`/bin/sh` on Linux and macOS).
 
 ### Option 1: download the script
 
@@ -154,8 +153,8 @@ duckdb -no-init -no-agent -cmd ".rows" -cmd ".maxrows -1" -cmd ".maxwidth 0" \
   as `year=2024`, aren't shown as columns unless you pass `-p`. Columns
   stored inside the files are always shown.
 - **Columns that only some files have are still shown.** Files without the
-  column show `NULL`. To do this, duckdb reads every file's footer, which
-  takes a fraction of a second even for thousands of local files.
+  column show `NULL`. To find all the columns, duckdb reads every file's
+  footer.
 - **`~/.duckdbrc` is never read.** Its settings don't apply, such as
   `extension_directory` or S3 credentials. Local parquet files don't need
   any of that. Remote paths (`s3://`, `https://`) need duckdb extensions
@@ -165,8 +164,8 @@ duckdb -no-init -no-agent -cmd ".rows" -cmd ".maxrows -1" -cmd ".maxwidth 0" \
   collapse instead, and you may see "Row 2, Row 3" without "Row 1". Use `-a`
   to show everything, or `-n` to show fewer values.
 - **Pipes and notebooks:** there's no terminal width, so every column is
-  printed. That suits `less -S`, but can be very wide in a Jupyter cell
-  (`!hp ...`).
+  printed. Use `less -S` to scroll sideways. In a Jupyter cell (`!hp ...`)
+  the output can be very wide.
 - **A 5-second pause:** in a terminal, duckdb asks for the background color
   so it can color its output. If your terminal never answers, duckdb waits
   5 seconds and prints a timeout warning. `export NO_COLOR=1` turns that off.
