@@ -1,5 +1,5 @@
 #!/bin/sh
-# hp: head for parquet files. Runs duckdb -c "FROM read_parquet(...)".
+# hp: head for parquet files. Runs duckdb -c "FROM read_parquet(...) LIMIT 10".
 set -eu
 
 usage() {
@@ -9,8 +9,8 @@ Usage: hp [options] PATH...
 Print parquet data with the duckdb CLI (v2.0.0+). PATH is a parquet file,
 a folder (read as FOLDER/**/*.parquet), or a quoted glob.
 
-  -n N         show the first N rows (default: the first 10 and last 10;
-               with --glimpse, 5 values per column)
+  -n N         show the first N rows (default 10; with --glimpse, N values
+               per column, default 5)
   --glimpse    one line per column: name, type, first values
   --all        show every column instead of collapsing the middle ones
   --partition  show hive partition columns (hidden by default)
@@ -76,7 +76,6 @@ SELECT CASE WHEN $width > 0 AND length(line) > $width THEN left(line, $width - 1
 FROM lines ORDER BY i"
 fi
 
-maxrows=20 maxwidth=0 limit=
-[ -n "$n" ] && maxrows=-1 limit="LIMIT $n"
+maxwidth=0
 [ "$all" = true ] && maxwidth=1000000
-exec duckdb -no-init -no-agent -cmd ".maxrows $maxrows" -cmd ".maxwidth $maxwidth" -c "FROM $src $limit"
+exec duckdb -no-init -no-agent -cmd ".maxrows -1" -cmd ".maxwidth $maxwidth" -c "FROM $src LIMIT ${n:-10}"

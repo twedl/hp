@@ -1,5 +1,5 @@
 IO Error: No files found that match the pattern "nope.parquet"
 
-LINE 1: FROM read_parquet(['nope.parquet'], hive_partitioning = false) 
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+LINE 1: FROM read_parquet(['nope.parquet'], hive_partitioning = false...
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 [exit 1]
