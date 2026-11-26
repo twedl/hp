@@ -1,9 +1,12 @@
 # hp
 
-`head` for parquet files. It's a thin wrapper around the
-[duckdb CLI](https://duckdb.org/docs/stable/clients/cli/overview) that runs
-`duckdb -c "FROM read_parquet(...) LIMIT 10"` on a file, a hive-partitioned
-folder, or a glob.
+`head` for parquet files.
+
+`hp` shows the first rows of a parquet file, a hive-partitioned folder, or a
+glob. With `--glimpse` it shows one row per column instead, with each
+column's type and first few values. It's a short shell script around the
+[duckdb CLI](https://duckdb.org/docs/stable/clients/cli/overview), and reads
+only the rows it prints, so it's quick on datasets of any size.
 
 ```
 $ hp data/raw
@@ -23,7 +26,9 @@ $ hp data/raw
 │       9 │ 2023-01-01 07:30:00 │ north end │ … │ D-279   │ [1, 5]  │
 └─────────┴─────────────────────┴───────────┴───┴─────────┴─────────┘
   10 rows                                      10 columns (5 shown)
+```
 
+```
 $ hp --glimpse data/raw
 ┌─────────────┬──────────────┬─────────────────────┬─────────────────────┬─────────────────────┐
 │   Column    │     Type     │        Row 1        │        Row 2        │        Row 3        │
@@ -39,6 +44,52 @@ $ hp --glimpse data/raw
 │ driver      │ varchar      │                NULL │               D-031 │               D-062 │
 │ ratings     │ int64[]      │              [1, 1] │              [2, 2] │              [3, 3] │
 └─────────────┴──────────────┴─────────────────────┴─────────────────────┴─────────────────────┘
+```
+
+## Install
+
+### Requirements
+
+- **duckdb 2.0.0 or newer**, as a `duckdb` command on your `PATH`. A shell
+  alias won't work, because `hp` is a script and can't see aliases. To
+  install duckdb, use `brew install duckdb` or the official installer
+  (`curl https://install.duckdb.org | sh`). The installer's output tells you
+  how to add duckdb to your `PATH`.
+- Any POSIX shell (`/bin/sh` on Linux and macOS). Nothing else is needed.
+
+### Option 1: download the script
+
+```sh
+mkdir -p ~/.local/bin
+curl -fsSL <GITLAB_URL>/-/raw/main/hp -o ~/.local/bin/hp
+chmod +x ~/.local/bin/hp
+```
+
+To update, run the same `curl` command again. Use the git option below if
+the project is private, because it uses your normal GitLab login. Change
+`main` if the project's default branch has another name.
+
+### Option 2: clone the repository
+
+```sh
+git clone <GITLAB_URL>.git ~/src/hp
+mkdir -p ~/.local/bin
+ln -s ~/src/hp/hp ~/.local/bin/hp
+```
+
+To update, run `git -C ~/src/hp pull`.
+
+### Check that it works
+
+```sh
+hp --help
+```
+
+If you get `command not found`, `~/.local/bin` isn't on your `PATH`. Add
+this line to `~/.bashrc` or `~/.zshrc`, then open a new terminal:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ## Usage
@@ -57,24 +108,79 @@ hp [OPTION]... PATH...
 As with head, -N means -n N. Short options can be combined: -gp, -gn3.
 ```
 
-`PATH` can be a parquet file, a folder (read as `FOLDER/**/*.parquet`), or a
-glob. Quote a glob so duckdb expands it rather than your shell, e.g.
-`hp 'data/raw/year=2024/*.parquet'`. Several paths are read as one dataset.
-`~/.duckdbrc` is ignored. Only the first rows are read, so `hp` is quick on
-datasets of any size.
-
-## Install
-
-You need duckdb v2.0.0 or newer (`brew install duckdb`). Then put the script
-on your `PATH`:
+### Examples
 
 ```sh
-ln -s "$PWD/hp" ~/.local/bin/hp
+hp trips.parquet                  # first 10 rows
+hp -n 50 trips.parquet            # first 50 rows (or -50, -n50, --lines=50)
+hp data/raw                       # a folder, e.g. a hive-partitioned dataset
+hp -p data/raw                    # also show partition columns like year
+hp 'data/raw/year=2024/*.parquet' # a glob, in quotes
+hp jan.parquet feb.parquet        # several files, read as one dataset
+hp -g data/raw                    # glimpse: 3 values per column
+hp -gn5 data/raw                  # glimpse with 5 values per column
+hp data/raw | less -S             # every column; scroll sideways in less
 ```
 
-## Tests
+### What a PATH can be
+
+- **A file:** `trips.parquet`.
+- **A folder:** read as `FOLDER/**/*.parquet`, so files in subfolders are
+  included. Files that don't end in `.parquet` are skipped, such as
+  `_SUCCESS` or `.crc` files.
+- **A glob:** for example `'data/raw/**/*.parquet'`. Put it in quotes so duckdb
+  expands it rather than your shell. Unquoted, zsh stops with
+  `no matches found` when nothing matches, and bash may pass only some of the
+  files.
+
+## How it works
+
+`hp` runs a single duckdb command:
 
 ```sh
-tests/run.sh            # compare output with tests/expected/
-tests/run.sh --update   # accept the current output
+duckdb -no-init -no-agent -cmd ".rows" -cmd ".maxrows -1" -cmd ".maxwidth 0" \
+  -c "FROM read_parquet([PATH, ...], hive_partitioning = false, union_by_name = true) LIMIT 10"
 ```
+
+`--glimpse` swaps `.rows` for `.columns`, `-p` sets `hive_partitioning` to
+`true`, and `-a` raises `.maxwidth`.
+
+### Good to know
+
+- **Which rows are "first":** paths are read in the order you give them, and
+  each folder or glob in sorted path order. String sorting puts `k=10`
+  before `k=2`.
+- **Partition columns are hidden by default.** Values in folder names, such
+  as `year=2024`, aren't shown as columns unless you pass `-p`. Columns
+  stored inside the files are always shown.
+- **Columns that only some files have are still shown.** Files without the
+  column show `NULL`. To do this, duckdb reads every file's footer, which
+  takes a fraction of a second even for thousands of local files.
+- **`~/.duckdbrc` is never read.** Its settings don't apply, such as
+  `extension_directory` or S3 credentials. Local parquet files don't need
+  any of that. Remote paths (`s3://`, `https://`) need duckdb extensions
+  and credentials, so they may not work.
+- **Narrow terminals:** duckdb collapses the middle columns to `…` to fit
+  the table. In `--glimpse` the columns are the values, so the middle values
+  collapse instead, and you may see "Row 2, Row 3" without "Row 1". Use `-a`
+  to show everything, or `-n` to show fewer values.
+- **Pipes and notebooks:** there's no terminal width, so every column is
+  printed. That suits `less -S`, but can be very wide in a Jupyter cell
+  (`!hp ...`).
+- **A 5-second pause:** in a terminal, duckdb asks for the background color
+  so it can color its output. If your terminal never answers, duckdb waits
+  5 seconds and prints a timeout warning. `export NO_COLOR=1` turns that off.
+
+## Development
+
+`hp` is a single file: [`hp`](hp). The tests build small parquet datasets
+with duckdb and compare `hp`'s output with the files in `tests/expected/`:
+
+```sh
+tests/run.sh            # run the tests
+tests/run.sh --update   # accept the current output as expected
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
