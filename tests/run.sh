@@ -53,6 +53,7 @@ check glimpse-2 -gpn 2 'data/**/*.parquet'
 check glimpse-2 -pg2 'data/**/*.parquet'
 
 check missing nope.parquet
+check no-match 'nothere/*.parquet'
 check new-column evolve
 check bad-option --bogus data
 check bad-combined -gx data

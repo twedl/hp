@@ -28,6 +28,10 @@ die() {
 
 add_path() {
 	p=$1
+	case $p in
+	*[*?[]* | *://*) ;; # a glob or URL: duckdb resolves it
+	*) [ -e "$p" ] || die "no such file or folder: $p" ;;
+	esac
 	[ -d "$p" ] && p="${p%/}/**/*.parquet"
 	paths="${paths:+$paths, }'$(printf %s "$p" | sed "s/'/''/g")'"
 }

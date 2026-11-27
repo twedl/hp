@@ -1,5 +1,2 @@
-IO Error: No files found that match the pattern "nope.parquet"
-
-LINE 1: FROM read_parquet(['nope.parquet'], hive_partitioning = false...
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-[exit 1]
+hp: no such file or folder: nope.parquet
+[exit 2]
